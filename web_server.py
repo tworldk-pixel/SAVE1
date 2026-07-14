@@ -182,7 +182,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--trailer);box-shadow:0
     <div class="hint" style="margin-top:4px">거리(KM)별 운임/인천지역/평택지역 조회 시 입력한 km에 해당하는 요율로 조회합니다.</div>
   </div>
   <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-    <button class="btn" onclick="saveTerminals()">💾 선택저장</button>
+    <button class="btn" onclick="saveTerminals()">💾 선택저장후 조회</button>
     <button class="btn btn-ghost" onclick="selectAllTerminals()">전체선택</button>
     <button class="btn btn-ghost" onclick="deselectAllTerminals()">전체해제</button>
   </div>
@@ -283,8 +283,13 @@ async function saveTerminals(){
     const r = await fetch('/api/quote/terminal-settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({terminals: names})});
     const d = await r.json();
     _selectedTerminals = new Set(d.selected||names);
-    st.style.color='#16a34a'; st.textContent=`✓ 저장됨 (${_selectedTerminals.size}개 터미널) — 이후 조회에 계속 반영됩니다.`;
-    if(_lastQueries.length) await refreshAll();
+    if(_lastQueries.length){
+      st.style.color='#16a34a'; st.textContent=`✓ 저장됨 (${_selectedTerminals.size}개 터미널) — 조회 중...`;
+      await refreshAll();
+      st.style.color='#16a34a'; st.textContent=`✓ 저장됨 (${_selectedTerminals.size}개 터미널) — 조회 결과에 반영했습니다.`;
+    }else{
+      st.style.color='#16a34a'; st.textContent=`✓ 저장됨 (${_selectedTerminals.size}개 터미널) — 이후 조회에 계속 반영됩니다.`;
+    }
   }catch(e){ st.style.color='#dc2626'; st.textContent='저장 오류: '+e; }
 }
 
