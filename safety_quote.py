@@ -165,8 +165,10 @@ def resolve_region(si: str, sgg: str, hdong: str) -> dict:
 
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-# 거리(KM)별 왕복기점 보조 조회용 기준좌표(각 항구 대표 위치)
-INCHEON_COORD = (37.4547888, 126.5976971)
+# 거리(KM)별 왕복기점 보조 조회용 기준좌표. 인천은 구항(인천컨테이너터미널)·신항(한진인천컨테이너
+# 터미널)이 서로 다른 위치라 하나로 뭉뚱그리면 거리가 부정확해져 둘 다 계산해 각각 보여준다.
+GUHANG_COORD = (37.4602931, 126.6297553)      # 구항 — 인천컨테이너터미널(중구 항동7가 126)
+SINHANG_COORD = (37.3474948, 126.6519602)     # 신항 — 한진인천컨테이너터미널(연수구 인천신항대로 777)
 PYEONGTAEK_COORD = (36.9700991, 126.8474051)
 
 
@@ -207,18 +209,21 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return r * 2 * math.atan2(a ** 0.5, (1 - a) ** 0.5)
 
 
-def distance_terminal_for(lat: float, lon: float, selected_terminals: list) -> dict:
+def distance_terminal_for(lat: float, lon: float, selected_terminals: list) -> list:
     """선택된 터미널 중 거리(KM)별-인천지역/평택지역이 있으면 기준좌표까지 직선거리(km)를
-    계산해 {terminal, distance_km} 반환(둘 다 선택돼 있으면 더 가까운 쪽). 없으면 {}."""
-    candidates = []
-    if "거리(KM)별-인천지역" in (selected_terminals or []):
-        candidates.append(("거리(KM)별-인천지역", _haversine_km(lat, lon, *INCHEON_COORD)))
-    if "거리(KM)별-평택지역" in (selected_terminals or []):
-        candidates.append(("거리(KM)별-평택지역", _haversine_km(lat, lon, *PYEONGTAEK_COORD)))
-    if not candidates:
-        return {}
-    terminal, km = min(candidates, key=lambda x: x[1])
-    return {"terminal": terminal, "distance_km": round(km, 1)}
+    계산해 [{terminal, basis, distance_km}, ...] 반환. 인천지역은 출발지(구항/신항)가 명확하지
+    않아 둘 다 계산해 각각 반환 — 어느 한쪽으로 단정하면 결과가 부정확해질 수 있다."""
+    selected_terminals = selected_terminals or []
+    results = []
+    if "거리(KM)별-인천지역" in selected_terminals:
+        results.append({"terminal": "거리(KM)별-인천지역", "basis": "구항",
+                         "distance_km": round(_haversine_km(lat, lon, *GUHANG_COORD), 1)})
+        results.append({"terminal": "거리(KM)별-인천지역", "basis": "신항",
+                         "distance_km": round(_haversine_km(lat, lon, *SINHANG_COORD), 1)})
+    if "거리(KM)별-평택지역" in selected_terminals:
+        results.append({"terminal": "거리(KM)별-평택지역", "basis": "평택",
+                         "distance_km": round(_haversine_km(lat, lon, *PYEONGTAEK_COORD), 1)})
+    return results
 
 
 _PRICE_RE = re.compile(r"[\d,]+")

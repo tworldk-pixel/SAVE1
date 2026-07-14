@@ -365,6 +365,8 @@ async function searchAddr(){
   }catch(e){ $('addr-list').innerHTML = '검색 오류: '+e; }
 }
 
+let _distanceFallback = null;  // {label, results:[{terminal,basis,distance_km}]} — 행정구역 매칭 실패 시에만 사용
+
 async function tryFallback(q){
   $('addr-list').innerHTML = '<div class="hint">⏳ 자체 검색 결과가 없어 보조 지오코딩으로 재시도합니다...</div>';
   try{
@@ -372,13 +374,15 @@ async function tryFallback(q){
     const d = await r.json();
     if(!d.ok){ $('addr-list').innerHTML = `<div class="hint">${_escFb(d.error||'검색 결과가 없습니다. 더 구체적으로 입력해 보세요.')}</div>`; return; }
     if(d.mode==='region'){
+      _distanceFallback = null;
       _lastQueries = [{...d.region, label: `${d.label} (보조 지오코딩)`}];
       $('addr-list').innerHTML = '<div class="hint">✓ 보조 지오코딩으로 행정구역을 찾아 조회했습니다.</div>';
     }else{
-      $('terminal-km-input').value = d.distance_km;
-      updateDistanceKmVisibility();
-      _lastQueries = [{r1:'-', r2:'-', r3:'-', label: `${d.label} (행정구역 미매칭 → ${d.terminal} 약 ${d.distance_km}km 추정)`}];
-      $('addr-list').innerHTML = `<div class="hint">✓ 행정구역 매칭은 실패했지만 ${d.terminal} 기준 약 ${d.distance_km}km로 추정해 조회했습니다.</div>`;
+      _distanceFallback = {label: d.label, results: d.results};
+      _lastQueries = d.results.map(x=>({label: `${d.label} (${x.basis} 기준)`}));  // refreshAll 트리거용(내용은 미사용)
+      const detail = d.results.map(x=>`- ${x.basis} 기준: 약 ${x.distance_km}km`).join('\n');
+      alert(`⚠ 출발지 행정구역이 명확하지 않아 결과가 부정확할 수 있습니다.\n거리 기반으로 각각 추정해 조회합니다.\n\n${detail}`);
+      $('addr-list').innerHTML = '<div class="hint">✓ 행정구역 매칭 실패 — 거리 기반으로 각각 추정해 조회했습니다.</div>';
     }
     await refreshAll();
   }catch(e){ $('addr-list').innerHTML = '보조 조회 오류: '+e; }
@@ -413,6 +417,7 @@ async function pickCandidate(i){
     const r = await fetch('/api/quote/resolve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({si:c.si, sgg:c.sgg, hdong})});
     const d = await r.json();
     if(!d.ok){ await tryFallback($('addr-input').value.trim()); return; }
+    _distanceFallback = null;
     _lastQueries = [{...d.region, label: c.roadAddr}];
     await refreshAll();
   }catch(e){ alert('조회 오류: '+e); }
@@ -596,6 +601,7 @@ function copyQuote(idx, btn){
 }
 
 async function refreshAll(){
+  if(_distanceFallback){ await refreshDistanceFallback(); return; }
   if(!_lastQueries.length) return;
   $('result-list').innerHTML = _lastQueries.map(q=>`<div class="card"><div class="addr-header">📍 ${q.label}</div><div class="hint">⏳ 터미널별 요율 조회 중... (최대 10초)</div></div>`).join('');
   const extra = collectExtra();
@@ -605,6 +611,24 @@ async function refreshAll(){
       const rates = await rr.json();
       return {label: q.label, data: rates};
     }catch(e){ return {label: q.label, data: {error: String(e)}}; }
+  }));
+  _lastRawResults = results;
+  renderAll();
+}
+
+async function refreshDistanceFallback(){
+  const {label, results: bases} = _distanceFallback;
+  $('result-list').innerHTML = bases.map(x=>`<div class="card"><div class="addr-header">📍 ${label} (${x.basis} 기준)</div><div class="hint">⏳ 조회 중... (${x.terminal}, 약 ${x.distance_km}km)</div></div>`).join('');
+  const extra = collectExtra();
+  const weightTons = collectWeightTons();
+  const results = await Promise.all(bases.map(async x=>{
+    try{
+      const rr = await fetch('/api/quote/rates', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+        r1:'-', r2:'-', r3:'-', extra, weight_tons: weightTons, distance_km: x.distance_km, terminals: [x.terminal]
+      })});
+      const rates = await rr.json();
+      return {label: `${label} (${x.basis} 기준, 약 ${x.distance_km}km)`, data: rates};
+    }catch(e){ return {label: `${label} (${x.basis} 기준)`, data: {error: String(e)}}; }
   }));
   _lastRawResults = results;
   renderAll();
@@ -672,13 +696,12 @@ async def quote_geocode_fallback(request: Request):
     if region:
         return JSONResponse({"ok": True, "mode": "region", "region": region, "label": geo["display_name"]})
     selected = sq.get_selected_terminals()
-    dist = sq.distance_terminal_for(geo["lat"], geo["lon"], selected)
-    if not dist:
+    dist_list = sq.distance_terminal_for(geo["lat"], geo["lon"], selected)
+    if not dist_list:
         return JSONResponse({"ok": False, "error": (
             "행정구역 매칭에 실패했고, 터미널 설정에 거리(KM)별-인천지역/평택지역도 "
             "선택되어 있지 않아 자동 조회할 수 없습니다. 터미널 설정에서 하나를 선택해주세요.")})
-    return JSONResponse({"ok": True, "mode": "distance", "label": geo["display_name"],
-                          "terminal": dist["terminal"], "distance_km": dist["distance_km"]})
+    return JSONResponse({"ok": True, "mode": "distance", "label": geo["display_name"], "results": dist_list})
 
 
 @app.post("/api/quote/rates")
@@ -698,8 +721,9 @@ async def quote_rates(request: Request):
         distance_km = None
     if not r1:
         return JSONResponse({"error": "지역 정보가 없습니다."}, status_code=400)
+    terminals_override = body.get("terminals") or None
     try:
-        terminals = sq.get_selected_terminals()
+        terminals = terminals_override or sq.get_selected_terminals()
         rates = await asyncio.get_event_loop().run_in_executor(
             None, lambda: sq.get_rates(sq.TYPES, r1, r2, r3, extra, terminals=terminals,
                                         weight_tons=weight_tons, distance_km=distance_km))
