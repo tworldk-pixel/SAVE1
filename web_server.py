@@ -13,7 +13,7 @@ QUOTE_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI 견적 · 경평물류</title>
+<title>안전운임 조회 · 경평물류</title>
 <style>  :root{
     --bg:#1B2027; --panel:#242A33; --panel-2:#2B323C; --line:#3A4250;
     --ink:#E8E4D9; --muted:#8B93A0; --muted-2:#5E6674;
@@ -126,7 +126,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--trailer);box-shadow:0
 <header class="top">
   <div class="brand">
     <div class="eyebrow">경평물류(주) 인천사무소</div>
-    <h1>📊 AI 견적 — 안전운임 조회</h1>
+    <h1>📊 안전운임 조회</h1>
   </div>
 </header>
 
