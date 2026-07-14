@@ -209,20 +209,37 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return r * 2 * math.atan2(a ** 0.5, (1 - a) ** 0.5)
 
 
+OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
+
+
+def _road_km(lat1, lon1, lat2, lon2) -> float:
+    """실제 도로 경로거리(km) — OSRM(오픈소스 라우팅, 가입불필요)로 조회, 실패 시 직선거리로 대체.
+    네이버지도 자체 API는 서버 조회 시 캡차로 막혀 못 쓰기 때문에 쓰는 대체재."""
+    try:
+        url = f"{OSRM_URL}/{lon1},{lat1};{lon2},{lat2}"
+        r = requests.get(url, params={"overview": "false"}, timeout=8)
+        data = r.json()
+        if data.get("code") == "Ok" and data.get("routes"):
+            return data["routes"][0]["distance"] / 1000.0
+    except Exception:
+        pass
+    return _haversine_km(lat1, lon1, lat2, lon2)
+
+
 def distance_terminal_for(lat: float, lon: float, selected_terminals: list) -> list:
-    """선택된 터미널 중 거리(KM)별-인천지역/평택지역이 있으면 기준좌표까지 직선거리(km)를
+    """선택된 터미널 중 거리(KM)별-인천지역/평택지역이 있으면 기준좌표까지 실제 도로거리(km)를
     계산해 [{terminal, basis, distance_km}, ...] 반환. 인천지역은 출발지(구항/신항)가 명확하지
     않아 둘 다 계산해 각각 반환 — 어느 한쪽으로 단정하면 결과가 부정확해질 수 있다."""
     selected_terminals = selected_terminals or []
     results = []
     if "거리(KM)별-인천지역" in selected_terminals:
         results.append({"terminal": "거리(KM)별-인천지역", "basis": "구항",
-                         "distance_km": round(_haversine_km(lat, lon, *GUHANG_COORD), 1)})
+                         "distance_km": round(_road_km(lat, lon, *GUHANG_COORD), 1)})
         results.append({"terminal": "거리(KM)별-인천지역", "basis": "신항",
-                         "distance_km": round(_haversine_km(lat, lon, *SINHANG_COORD), 1)})
+                         "distance_km": round(_road_km(lat, lon, *SINHANG_COORD), 1)})
     if "거리(KM)별-평택지역" in selected_terminals:
         results.append({"terminal": "거리(KM)별-평택지역", "basis": "평택",
-                         "distance_km": round(_haversine_km(lat, lon, *PYEONGTAEK_COORD), 1)})
+                         "distance_km": round(_road_km(lat, lon, *PYEONGTAEK_COORD), 1)})
     return results
 
 
