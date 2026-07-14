@@ -154,7 +154,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--trailer);box-shadow:0
 <div class="card">
   <div class="step-label">📊 화주 제출용 견적 설정</div>
   <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-    <div style="display:flex;align-items:center;gap:8px"><label style="margin:0">쉐어율(마진 양보)</label><input type="number" id="share-input" style="width:66px" value="0" onchange="onShareChange()">%</div>
+    <div style="display:flex;align-items:center;gap:8px"><label style="margin:0">쉐어율(마진 양보)</label><input type="number" id="share-input" style="width:66px" value="0" oninput="onShareChange()">%</div>
     <button type="button" class="round-toggle" id="btn-round-fare" onclick="toggleRound('fare')">고시운임 사사오입 OFF</button>
     <button type="button" class="round-toggle" id="btn-round-quote" onclick="toggleRound('quote')">견적가 사사오입 OFF</button>
   </div>
