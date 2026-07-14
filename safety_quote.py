@@ -164,6 +164,63 @@ def resolve_region(si: str, sgg: str, hdong: str) -> dict:
     return {}
 
 
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+# 거리(KM)별 왕복기점 보조 조회용 기준좌표(각 항구 대표 위치)
+INCHEON_COORD = (37.4547888, 126.5976971)
+PYEONGTAEK_COORD = (36.9700991, 126.8474051)
+
+
+def geocode_osm(query: str) -> dict:
+    """forwarder.kr 자체 주소검색/행정구역 매칭이 실패했을 때 쓰는 보조 지오코딩(OpenStreetMap
+    Nominatim, 가입 불필요·공개 API). si/sgg/hdong 추정치와 좌표(lat/lon)를 반환, 실패 시 {}."""
+    query = (query or "").strip()
+    if not query:
+        return {}
+    try:
+        r = requests.get(NOMINATIM_URL, params={
+            "q": query, "format": "jsonv2", "addressdetails": 1, "countrycodes": "kr", "limit": 1,
+        }, headers={"User-Agent": "kp-logis-quote-tool/1.0"}, timeout=10)
+        rows = r.json()
+    except Exception:
+        return {}
+    if not rows:
+        return {}
+    row = rows[0]
+    addr = row.get("address", {})
+    si = addr.get("province") or addr.get("state") or ""
+    sgg = addr.get("city") or addr.get("county") or addr.get("city_district") or ""
+    hdong = addr.get("town") or addr.get("suburb") or addr.get("village") or addr.get("quarter") or ""
+    try:
+        lat, lon = float(row.get("lat")), float(row.get("lon"))
+    except (TypeError, ValueError):
+        return {}
+    return {"lat": lat, "lon": lon, "si": si, "sgg": sgg, "hdong": hdong,
+            "display_name": row.get("display_name", query)}
+
+
+def _haversine_km(lat1, lon1, lat2, lon2) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return r * 2 * math.atan2(a ** 0.5, (1 - a) ** 0.5)
+
+
+def distance_terminal_for(lat: float, lon: float, selected_terminals: list) -> dict:
+    """선택된 터미널 중 거리(KM)별-인천지역/평택지역이 있으면 기준좌표까지 직선거리(km)를
+    계산해 {terminal, distance_km} 반환(둘 다 선택돼 있으면 더 가까운 쪽). 없으면 {}."""
+    candidates = []
+    if "거리(KM)별-인천지역" in (selected_terminals or []):
+        candidates.append(("거리(KM)별-인천지역", _haversine_km(lat, lon, *INCHEON_COORD)))
+    if "거리(KM)별-평택지역" in (selected_terminals or []):
+        candidates.append(("거리(KM)별-평택지역", _haversine_km(lat, lon, *PYEONGTAEK_COORD)))
+    if not candidates:
+        return {}
+    terminal, km = min(candidates, key=lambda x: x[1])
+    return {"terminal": terminal, "distance_km": round(km, 1)}
+
+
 _PRICE_RE = re.compile(r"[\d,]+")
 
 

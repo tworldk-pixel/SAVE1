@@ -359,10 +359,33 @@ async function searchAddr(){
     const r = await fetch('/api/quote/address-search', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({q})});
     const d = await r.json();
     _candidates = d.candidates||[];
-    if(!_candidates.length){ $('addr-list').innerHTML = '<div class="hint">검색 결과가 없습니다. 더 구체적으로 입력해 보세요.</div>'; return; }
+    if(!_candidates.length){ await tryFallback(q); return; }
     renderCandidates();
     await pickCandidate(0);
   }catch(e){ $('addr-list').innerHTML = '검색 오류: '+e; }
+}
+
+async function tryFallback(q){
+  $('addr-list').innerHTML = '<div class="hint">⏳ 자체 검색 결과가 없어 보조 지오코딩으로 재시도합니다...</div>';
+  try{
+    const r = await fetch('/api/quote/geocode-fallback', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({q})});
+    const d = await r.json();
+    if(!d.ok){ $('addr-list').innerHTML = `<div class="hint">${_escFb(d.error||'검색 결과가 없습니다. 더 구체적으로 입력해 보세요.')}</div>`; return; }
+    if(d.mode==='region'){
+      _lastQueries = [{...d.region, label: `${d.label} (보조 지오코딩)`}];
+      $('addr-list').innerHTML = '<div class="hint">✓ 보조 지오코딩으로 행정구역을 찾아 조회했습니다.</div>';
+    }else{
+      $('terminal-km-input').value = d.distance_km;
+      updateDistanceKmVisibility();
+      _lastQueries = [{r1:'-', r2:'-', r3:'-', label: `${d.label} (행정구역 미매칭 → ${d.terminal} 약 ${d.distance_km}km 추정)`}];
+      $('addr-list').innerHTML = `<div class="hint">✓ 행정구역 매칭은 실패했지만 ${d.terminal} 기준 약 ${d.distance_km}km로 추정해 조회했습니다.</div>`;
+    }
+    await refreshAll();
+  }catch(e){ $('addr-list').innerHTML = '보조 조회 오류: '+e; }
+}
+
+function _escFb(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function renderCandidates(){
@@ -385,11 +408,11 @@ async function pickCandidate(i){
   });
   const reopen = $('addr-reopen'); if(reopen) reopen.style.display='block';
   const hdong = c.hdongs && c.hdongs[0];
-  if(!hdong){ alert('행정동 정보를 가져올 수 없습니다.'); return; }
+  if(!hdong){ await tryFallback($('addr-input').value.trim()); return; }
   try{
     const r = await fetch('/api/quote/resolve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({si:c.si, sgg:c.sgg, hdong})});
     const d = await r.json();
-    if(!d.ok){ alert('해당 주소의 안전운임 구간 정보를 찾지 못했습니다.'); return; }
+    if(!d.ok){ await tryFallback($('addr-input').value.trim()); return; }
     _lastQueries = [{...d.region, label: c.roadAddr}];
     await refreshAll();
   }catch(e){ alert('조회 오류: '+e); }
@@ -630,6 +653,32 @@ async def quote_resolve(request: Request):
     if not region:
         return JSONResponse({"ok": False})
     return JSONResponse({"ok": True, "region": region})
+
+
+@app.post("/api/quote/geocode-fallback")
+async def quote_geocode_fallback(request: Request):
+    """forwarder.kr 자체 주소검색/행정구역 매칭이 실패했을 때 쓰는 보조 조회.
+    1) OpenStreetMap(Nominatim)으로 행정구역 추정 → forwarder.kr 재매칭 시도.
+    2) 그래도 안 되면 선택된 터미널 중 거리(KM)별-인천/평택지역이 있는지 보고
+       기준좌표까지 직선거리(km)를 계산해 그 터미널로 자동 조회."""
+    body = await request.json()
+    q = (body.get("q") or "").strip()
+    if not q:
+        return JSONResponse({"ok": False, "error": "주소를 입력하세요."})
+    geo = sq.geocode_osm(q)
+    if not geo:
+        return JSONResponse({"ok": False, "error": "보조 지오코딩에서도 이 주소를 찾지 못했습니다."})
+    region = sq.resolve_region(geo["si"], geo["sgg"], geo["hdong"])
+    if region:
+        return JSONResponse({"ok": True, "mode": "region", "region": region, "label": geo["display_name"]})
+    selected = sq.get_selected_terminals()
+    dist = sq.distance_terminal_for(geo["lat"], geo["lon"], selected)
+    if not dist:
+        return JSONResponse({"ok": False, "error": (
+            "행정구역 매칭에 실패했고, 터미널 설정에 거리(KM)별-인천지역/평택지역도 "
+            "선택되어 있지 않아 자동 조회할 수 없습니다. 터미널 설정에서 하나를 선택해주세요.")})
+    return JSONResponse({"ok": True, "mode": "distance", "label": geo["display_name"],
+                          "terminal": dist["terminal"], "distance_km": dist["distance_km"]})
 
 
 @app.post("/api/quote/rates")
